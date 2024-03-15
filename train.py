@@ -1,4 +1,5 @@
 import pandas as pd
+from tqdm import tqdm
 
 import torch
 from torch import nn
@@ -21,7 +22,11 @@ class MobileNetV3Landmark(nn.Module):
 
 
 def train_model(model, train_loader, valid_loader, num_epochs=25, learning_rate=0.001, early_stopping_patience=5):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        model = nn.DataParallel(model, device_ids=[0, 1])
+    else:
+        device = torch.device('cpu')
     model = model.to(device)
     
     criterion = nn.MSELoss()
@@ -33,11 +38,9 @@ def train_model(model, train_loader, valid_loader, num_epochs=25, learning_rate=
     model.train()
     for epoch in range(num_epochs):
         running_loss = 0.0
-        for batch, data in enumerate(train_loader, 0):
-
+        for batch, data in tqdm(enumerate(train_loader, 0), total=len(train_loader)):
             inputs, labels = data['image'].to(device), data['landmark'].to(device)
             optimizer.zero_grad()
-
             outputs = model(inputs)
             loss = criterion(outputs, labels.view(-1, 136))
             loss.backward()
@@ -57,7 +60,7 @@ def train_model(model, train_loader, valid_loader, num_epochs=25, learning_rate=
                 loss = criterion(outputs, labels.view(-1, 136))
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(valid_loader)
-        print(f'Epoch {epoch+1}, Train Loss: {avg_train_loss}, Valid Loss: {avg_val_loss}')
+        print(f'Epoch {epoch+1}, Train Loss: {avg_train_loss}, Valid Loss: {avg_val_loss}\n')
         
         # earlystopping
         if avg_val_loss < best_val_loss:
@@ -107,9 +110,9 @@ if __name__=="__main__":
         )
     print(f'#### train_dataset:{len(train_dataset)} / valid_dataset:{len(valid_dataset)} / test_dataset:{len(test_dataset)} ####')
     
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=1)
-    valid_loader = DataLoader(valid_dataset, batch_size=32, shuffle=True, num_workers=1)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=True, num_workers=1)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=4)
+    valid_loader = DataLoader(valid_dataset, batch_size=128, shuffle=True, num_workers=4)
+    #test_loader = DataLoader(test_dataset, batch_size=128, shuffle=True, num_workers=4)
    
     
     model = MobileNetV3Landmark()
