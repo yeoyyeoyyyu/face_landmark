@@ -7,17 +7,27 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torchvision.models import mobilenet_v3_large
 
-from data import FaceLandmarkDataset, ToTensor, add_padding_to_make_square
+from data import FaceLandmarkDataset, RescaleAndAdjustLandmark, ToTensor, Normalize
 
 
 class MobileNetV3Landmark(nn.Module):
     def __init__(self, num_landmarks=136):
         super(MobileNetV3Landmark, self).__init__()
         self.mobilenet = mobilenet_v3_large(pretrained=True)
-        self.mobilenet.classifier[3] = nn.Linear(self.mobilenet.classifier[3].in_features, num_landmarks)
+        self.mobilenet = nn.Sequential(*list(self.mobilenet.children())[:-1])
+        self.pool = nn.AdaptiveAvgPool2d((1,1))
+        self.linear = nn.Linear(960, num_landmarks)
+        self.batch_norm = nn.BatchNorm1d(num_landmarks)
+        self.activation = nn.ReLU()
+        #self.mobilenet.classifier[3] = nn.Linear(self.mobilenet.classifier[3].in_features, num_landmarks)
 
     def forward(self, x):
         x = self.mobilenet(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = self.linear(x)
+        x = self.batch_norm(x)
+        x = self.activation(x)
         return x
 
 
@@ -79,10 +89,9 @@ def train_model(model, train_loader, valid_loader, num_epochs=25, learning_rate=
 
 if __name__=="__main__":
     transform = transforms.Compose([
-        transforms.Lambda(add_padding_to_make_square),
-        transforms.Resize(224),
-        transforms.ToTensor(),
-        transforms.Normalize(
+        RescaleAndAdjustLandmark(224),
+        ToTensor(),
+        Normalize(
             mean=[0.5, 0.5, 0.5],
             std=[0.5, 0.5, 0.5]
             )
@@ -110,8 +119,8 @@ if __name__=="__main__":
         )
     print(f'#### train_dataset:{len(train_dataset)} / valid_dataset:{len(valid_dataset)} / test_dataset:{len(test_dataset)} ####')
     
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=4)
-    valid_loader = DataLoader(valid_dataset, batch_size=128, shuffle=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=12)
+    valid_loader = DataLoader(valid_dataset, batch_size=128, shuffle=True, num_workers=12)
     #test_loader = DataLoader(test_dataset, batch_size=128, shuffle=True, num_workers=4)
    
     

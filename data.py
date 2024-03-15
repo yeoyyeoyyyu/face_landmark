@@ -1,5 +1,6 @@
 import os
 import json
+import numpy as np
 import pandas as pd
 
 import torch
@@ -33,13 +34,12 @@ class FaceLandmarkDataset(Dataset):
         with open(json_name) as f:
             landmark_data = json.load(f)
         landmark = landmark_data['landmark']
-        landmark = [coordinate for point in landmark for coordinate in point]
-        transformed_landmark = torch.FloatTensor(landmark)
+        landmark = np.array(landmark)
         
+        data = {'image': image, 'landmark':landmark}
         if self.transform:
-            transformed_image = self.transform(image)
+            data = self.transform(data)
  
-        data = {'image': transformed_image, 'landmark': transformed_landmark}
         return data
 
 
@@ -54,10 +54,49 @@ class ResizeTransform:
 
 
 
+class RescaleAndAdjustLandmark(object):
+    def __init__(self, output_size):
+        assert isinstance(output_size, (int, tuple))
+        self.output_size = output_size
+   
+    def __call__(self, data):
+        image, landmark = data['image'], data['landmark']
+        
+        # image rescale
+        padding= (max(image.size) - min(image.size)) // 2
+        new_size = [max(image.size), max(image.size)]
+        new_img = Image.new('RGB', new_size)
+        new_img.paste(image, (0, padding))
+        new_img = new_img.resize((self.output_size, self.output_size))
+        
+        # Adjust landmark
+        landmark[:, 1] += padding
+        landmark = landmark.astype(float)
+        landmark *= self.output_size / max(image.size)
+
+        return {'image': new_img, 'landmark': landmark.flatten()} 
+
+
+
 class ToTensor(object):
-    def __call__(self, image):
-        image = transforms.ToTensor()(image)
-        return new_image
+    def __call__(self, data):
+        image, landmark = data['image'], data['landmark']
+        image = transforms.ToTensor()(image).float()
+        landmark = torch.from_numpy(landmark).float()
+        return {'image':image, 'landmark':landmark}
+
+
+
+class Normalize(object):
+    def __init__(self, mean, std, inplace=False):
+        self.mean = mean
+        self.std = std
+        self.inplace = inplace
+
+    def __call__(self, data):
+        image, landmark = data['image'], data['landmark']
+        image = F.normalize(image, self.mean, self.std, self.inplace)
+        return {'image':image, 'landmark':landmark}
 
 
 
@@ -73,10 +112,9 @@ def add_padding_to_make_square(image):
 
 if __name__=="__main__":
     transform = transforms.Compose([
-        transforms.Lambda(add_padding_to_make_square),
-        transforms.Resize(224),
-        transforms.ToTensor(),
-        transforms.Normalize(
+        RescaleAndAdjustLandmark(224),
+        ToTensor(),
+        Normalize(
             mean=[0.5, 0.5, 0.5],
             std=[0.5, 0.5, 0.5])
         ])
